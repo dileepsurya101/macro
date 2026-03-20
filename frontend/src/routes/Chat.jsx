@@ -3,13 +3,106 @@ import axios from 'axios';
 
 const API = import.meta.env.VITE_API_BASE_URL || '';
 
+// Simple Markdown renderer (no extra packages needed)
+function renderMarkdown(text) {
+  const lines = text.split('\n');
+  const elements = [];
+  let i = 0;
+
+  while (i < lines.length) {
+    const line = lines[i];
+
+    // Heading ##
+    if (/^###\s/.test(line)) {
+      elements.push(<h3 key={i} className="text-base font-bold text-white mt-3 mb-1">{line.replace(/^###\s/, '')}</h3>);
+    } else if (/^##\s/.test(line)) {
+      elements.push(<h2 key={i} className="text-lg font-bold text-white mt-4 mb-1">{line.replace(/^##\s/, '')}</h2>);
+    } else if (/^#\s/.test(line)) {
+      elements.push(<h1 key={i} className="text-xl font-bold text-white mt-4 mb-2">{line.replace(/^#\s/, '')}</h1>);
+
+    // Bullet list
+    } else if (/^[-*]\s/.test(line)) {
+      const items = [];
+      while (i < lines.length && /^[-*]\s/.test(lines[i])) {
+        items.push(<li key={i} className="ml-4 list-disc">{inlineFormat(lines[i].replace(/^[-*]\s/, ''))}</li>);
+        i++;
+      }
+      elements.push(<ul key={`ul-${i}`} className="my-2 space-y-1 text-slate-100">{items}</ul>);
+      continue;
+
+    // Numbered list
+    } else if (/^\d+\.\s/.test(line)) {
+      const items = [];
+      while (i < lines.length && /^\d+\.\s/.test(lines[i])) {
+        items.push(<li key={i} className="ml-4 list-decimal">{inlineFormat(lines[i].replace(/^\d+\.\s/, ''))}</li>);
+        i++;
+      }
+      elements.push(<ol key={`ol-${i}`} className="my-2 space-y-1 text-slate-100">{items}</ol>);
+      continue;
+
+    // Code block
+    } else if (/^```/.test(line)) {
+      const codeLines = [];
+      i++;
+      while (i < lines.length && !/^```/.test(lines[i])) {
+        codeLines.push(lines[i]);
+        i++;
+      }
+      elements.push(
+        <pre key={i} className="bg-slate-950 border border-slate-700 rounded-lg p-3 my-2 overflow-x-auto text-xs text-green-300 font-mono">
+          <code>{codeLines.join('\n')}</code>
+        </pre>
+      );
+
+    // Horizontal rule
+    } else if (/^---/.test(line)) {
+      elements.push(<hr key={i} className="border-slate-600 my-3" />);
+
+    // Bold category line (e.g. **Category**)
+    } else if (/^\*\*.*\*\*$/.test(line.trim())) {
+      elements.push(<p key={i} className="font-bold text-indigo-300 mt-3 mb-1">{line.replace(/\*\*/g, '')}</p>);
+
+    // Empty line -> spacer
+    } else if (line.trim() === '') {
+      elements.push(<div key={i} className="h-2" />);
+
+    // Normal paragraph
+    } else {
+      elements.push(<p key={i} className="leading-relaxed">{inlineFormat(line)}</p>);
+    }
+
+    i++;
+  }
+
+  return elements;
+}
+
+// Inline formatting: bold, italic, inline code
+function inlineFormat(text) {
+  const parts = [];
+  const regex = /(\*\*([^*]+)\*\*|\*([^*]+)\*|`([^`]+)`)/g;
+  let last = 0;
+  let match;
+  let idx = 0;
+
+  while ((match = regex.exec(text)) !== null) {
+    if (match.index > last) parts.push(<span key={idx++}>{text.slice(last, match.index)}</span>);
+    if (match[2]) parts.push(<strong key={idx++} className="font-semibold text-white">{match[2]}</strong>);
+    else if (match[3]) parts.push(<em key={idx++} className="italic">{match[3]}</em>);
+    else if (match[4]) parts.push(<code key={idx++} className="bg-slate-700 px-1 rounded text-xs font-mono text-green-300">{match[4]}</code>);
+    last = match.index + match[0].length;
+  }
+  if (last < text.length) parts.push(<span key={idx++}>{text.slice(last)}</span>);
+  return parts.length > 0 ? parts : text;
+}
+
 // Single message bubble
 function Bubble({ msg }) {
   const isUser = msg.role === 'user';
   return (
     <div className={`flex ${isUser ? 'justify-end' : 'justify-start'} mb-3`}>
       {!isUser && (
-        <span className="text-xl mr-2 self-end" role="img" aria-label="robot">&#x1F916;</span>
+        <span className="text-xl mr-2 self-end" role="img" aria-label="robot">🤖</span>
       )}
       <div
         className={`max-w-xl px-4 py-2.5 rounded-2xl text-sm leading-relaxed ${
@@ -18,7 +111,11 @@ function Bubble({ msg }) {
             : 'bg-slate-800 text-slate-100 rounded-bl-none'
         }`}
       >
-        <div className="whitespace-pre-wrap">{msg.content}</div>
+        {isUser ? (
+          <div className="whitespace-pre-wrap">{msg.content}</div>
+        ) : (
+          <div className="markdown-body">{renderMarkdown(msg.content)}</div>
+        )}
       </div>
     </div>
   );
@@ -57,13 +154,11 @@ export default function Chat() {
     if (!input.trim() || pending) return;
     setError('');
     setPending(true);
-
     try {
       let cid = conversationId;
       let fileIds = [...attachedFileIds];
 
-      // Upload any selected files first (needs an existing conversationId)
-      // For first message: create conv via chat, then upload on next message
+      // Upload any selected files first
       if (selectedFiles.length && cid) {
         const fd = new FormData();
         fd.append('conversationId', cid);
@@ -107,7 +202,7 @@ export default function Chat() {
       <div className="flex-1 overflow-y-auto chat-scroll border border-slate-800 rounded-2xl p-4 bg-slate-900 mb-4">
         {messages.length === 0 && !pending && (
           <p className="text-slate-500 text-sm text-center mt-8">
-            &#x1F916; Start a conversation with Macro!
+            🤖 Start a conversation with Macro!
           </p>
         )}
         {messages.map((m, i) => (
@@ -118,7 +213,7 @@ export default function Chat() {
             <span className="w-2 h-2 rounded-full bg-indigo-400 animate-pulse" />
             <span className="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-pulse delay-75" />
             <span className="w-1 h-1 rounded-full bg-indigo-400 animate-pulse delay-150" />
-            <span className="ml-1">Macro is thinking&hellip;</span>
+            <span className="ml-1">Macro is thinking…</span>
           </div>
         )}
         <div ref={bottomRef} />
@@ -143,7 +238,7 @@ export default function Chat() {
               onChange={(e) => setUseWebSearch(e.target.checked)}
               className="accent-indigo-500"
             />
-            <span>&#x1F310; Use web search</span>
+            <span>🌐 Use web search</span>
           </label>
 
           {/* File picker */}
@@ -156,7 +251,7 @@ export default function Chat() {
               onChange={(e) => setSelectedFiles(Array.from(e.target.files || []))}
             />
             <span className="px-3 py-1 border border-slate-700 hover:border-indigo-500 rounded-full transition">
-              &#x1F4CE; Attach files
+              📎 Attach files
             </span>
             {selectedFiles.length > 0 && (
               <span className="text-indigo-400">
